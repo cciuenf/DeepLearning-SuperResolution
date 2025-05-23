@@ -1,28 +1,3 @@
-#!/usr/bin/env bash
-
-# Simple C++ build script for main.cpp with OpenCV
-set -e
-
-OUTPUT_NAME="bin.out"
-SOURCE_FILE="main.cpp"
-
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-if [ ! -f "$SOURCE_FILE" ]; then
-    print_error "$SOURCE_FILE not found!"
-    echo "Creating a basic main.cpp with OpenCV..."
-
-    cat > main.cpp << 'EOF'
 #include <iostream>
 #include <opencv2/opencv.hpp>
 
@@ -52,17 +27,3 @@ int main() {
 
     return 0;
 }
-EOF
-    print_success "Created $SOURCE_FILE"
-fi
-
-echo "Building $SOURCE_FILE..."
-
-g++ -std=c++17 \
-    $(pkg-config --cflags opencv4) \
-    -o "$OUTPUT_NAME" \
-    "$SOURCE_FILE" \
-    $(pkg-config --libs opencv4)
-
-print_success "Build completed! Executable: ./$OUTPUT_NAME"
-echo "Run with: ./$OUTPUT_NAME"

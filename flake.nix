@@ -32,6 +32,7 @@
 
           # Set up pkg-config path for OpenCV
           export PKG_CONFIG_PATH=${pkgs.opencv4}/lib/pkgconfig:$PKG_CONFIG_PATH
+          export CPLUS_INCLUDE_PATH="$(pkg-config --cflags opencv4 | sed 's/-I//g'):$CPLUS_INCLUDE_PATH"
 
           USER_SHELL=$(getent passwd $USER | cut -d: -f7)
           exec $USER_SHELL
