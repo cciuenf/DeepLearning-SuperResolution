@@ -1,29 +1,72 @@
+#include <cstdlib>
+#include <ctime>
+#include <cmath>
 #include <iostream>
 #include <opencv2/opencv.hpp>
 
+float MeanSquaredError(cv::Mat img_og, cv::Mat img_noise){
+  float sum = 0;
+  for(int i = 0; i < img_og.cols; i++){
+    for(int j = 0; j < img_og.rows; j++){
+      for(int k = 0; k < 3; k++){
+        sum += pow((img_og.at<cv::Vec3b>(i, j)[k] - img_noise.at<cv::Vec3b>(i, j)[k]), 2);
+      }
+    }
+  }
+
+  return sum /= 3 * img_og.cols * img_og.rows;
+}
+
+float MeanAbsoluteError(cv::Mat img_og, cv::Mat img_noise){
+  float sum = 0;
+  for(int i = 0; i < img_og.cols; i++){
+    for(int j = 0; j < img_og.rows; j++){
+      for(int k = 0; k < 3; k++){
+        sum += abs((img_og.at<cv::Vec3b>(i, j)[k] - img_noise.at<cv::Vec3b>(i, j)[k]));
+      }
+    }
+  }
+
+  return sum /= 3 * img_og.cols * img_og.rows;
+}
+
+float PSNR(cv::Mat img_og, cv::Mat img_noise){
+  float sum = 0;
+  float psnr = 0;
+  for(int i = 0; i < img_og.cols; i++){
+    for(int j = 0; j < img_og.rows; j++){
+      for(int k = 0; k < 3; k++){
+        sum += pow((img_og.at<cv::Vec3b>(i, j)[k] - img_noise.at<cv::Vec3b>(i, j)[k]), 2);
+      }
+    }
+  }
+
+  psnr = 10 * (log(pow(255, 2) / sum) / log(10));
+  return psnr;
+}
+
 int main() {
-    std::cout << "Super Resolution Functions - OpenCV Version: " << CV_VERSION << std::endl;
+  std::srand(std::clock());
 
-    cv::Mat image = cv::Mat::zeros(400, 400, CV_8UC3);
-    cv::putText(image, "Hello OpenCV 4!", 
-                cv::Point(50, 200), 
-                cv::FONT_HERSHEY_SIMPLEX, 
-                1, 
-                cv::Scalar(0, 255, 0), 
-                2);
+  std::string image_path_1 = cv::samples::findFile("images/tokyo-sniper.jpg");
+  std::string image_path_2 = cv::samples::findFile("images/tokyo-sniper-noise.png");
+  cv::Mat img_og = cv::imread(image_path_1, cv::IMREAD_COLOR);
+  cv::Mat img_noise = cv::imread(image_path_2, cv::IMREAD_COLOR);
 
-    cv::imwrite("output.png", image);
-    std::cout << "Image saved as output.png" << std::endl;
+  float mean_squared_error, mean_absolute_error, psnr;
 
-    cv::Mat gray;
-    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
-    cv::imwrite("output_gray.png", gray);
-    std::cout << "Grayscale image saved as output_gray.png" << std::endl;
+  if(img_og.empty() || img_noise.empty()){
+      std::cout << "Could not read one of the images" << std::endl;
+      return 1;
+  }
 
-    std::cout << "Image size: " << image.cols << "x" << image.rows << std::endl;
-    std::cout << "Channels: " << image.channels() << std::endl;
+  mean_squared_error = MeanSquaredError(img_og, img_noise);
+  mean_absolute_error = MeanAbsoluteError(img_og, img_noise);
+  psnr = PSNR(img_og, img_noise);
 
-    std::cout << "OpenCV is working correctly!" << std::endl;
+  std::cout << "Mean Squared Error: " << mean_squared_error << std::endl;
+  std::cout << "Mean Absolute Error: " << mean_absolute_error << std::endl;
+  std::cout << "Peak Signal to Noise Ratio: " << psnr << std::endl;
 
-    return 0;
+  return 0;
 }
