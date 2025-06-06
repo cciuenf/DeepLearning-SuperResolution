@@ -1,9 +1,8 @@
 #include <cstdlib>
 #include <cmath>
-
 #include <filesystem>
-#include <fstream>
 #include <iostream>
+#include <vector>
 
 #include <opencv2/core.hpp>
 #include <opencv2/core/base.hpp>
@@ -65,12 +64,12 @@ float MeanAbsoluteError(cv::Mat img_og, cv::Mat img_constructed){
   return sum /= 3 * img_og.cols * img_og.rows;
 }
 
-float PSNR(cv::Mat img_og[], cv::Mat img_constructed[], int number_of_images){
+float PSNR(std::vector<cv::Mat> img_og, std::vector<cv::Mat> img_constructed, int number_of_images){
   float sum = 0;
   float psnr = 0;
 
   for(int i = 0; i < number_of_images; i++){
-    sum += MeanSquaredError(img_og[i], img_constructed[i]);
+    sum += MeanSquaredError(img_og.at(i), img_constructed.at(i));
   }
 
   psnr = 10 * (log(pow(255, 2) / (sum/number_of_images)) / log(10));
@@ -118,28 +117,22 @@ double SSIM(const cv::Mat& img1, const cv::Mat& img2,
 }
 
 int main() {
-
-  int i = 0;
   float psnr = 0;
   float ssim = 0;
   std::string file;
-  cv::Mat images_original[5];
-  cv::Mat images_upscaled[5];
+  std::vector<cv::Mat> images_original;
+  std::vector<cv::Mat> images_upscaled;
   std::filesystem::path directory_original = "./images/original";
   std::filesystem::path directory_upscaled = "./images/upscaled";
 
-  for(const auto& entry : std::filesystem::directory_iterator(directory_original)){
-    images_original[i] = cv::imread(entry.path(), cv::IMREAD_COLOR);
-    i++;
-  }
-  i = 0;
-  for(const auto& entry : std::filesystem::directory_iterator(directory_upscaled)){
-    images_upscaled[i] = cv::imread(entry.path(), cv::IMREAD_COLOR);
-    i++;
-  }
+  for(const auto& entry : std::filesystem::directory_iterator(directory_original))
+    images_original.push_back(cv::imread(entry.path(), cv::IMREAD_COLOR));
+
+  for(const auto& entry : std::filesystem::directory_iterator(directory_upscaled))
+    images_upscaled.push_back(cv::imread(entry.path(), cv::IMREAD_COLOR));
 
   psnr = PSNR(images_original, images_upscaled, 5);
-  ssim = SSIM(images_original[0], images_upscaled[0]);
+  ssim = SSIM(images_original.at(0), images_upscaled.at(0));
 
   std::cout << "PSNR of Set5: " << psnr << std::endl;
   std::cout << "SSIM of baby: " << ssim << std::endl;
