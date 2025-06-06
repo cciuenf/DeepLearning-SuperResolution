@@ -13,18 +13,24 @@ float MeanSquaredError(cv::Mat img_og, cv::Mat img_constructed){
   CV_Assert(img_og.type() == img_constructed.type());
   float sum = 0;
   float diff = 0;
+  #ifdef MIMG
   cv::Mat diff_img(img_og.size(), img_og.type());
+  #endif
   for(int i = 0; i < img_og.cols; i++){
     for(int j = 0; j < img_og.rows; j++){
       for(int k = 0; k < 3; k++){
         diff = pow((img_constructed.at<cv::Vec3b>(i, j)[k]) - img_og.at<cv::Vec3b>(i, j)[k], 2);
+        #ifdef MIMG
         diff_img.at<cv::Vec3b>(i, j)[k] = diff;
+        #endif
         sum += diff;
       }
     }
   }
 
+  #ifdef MIMG
   cv::imwrite("output_mse.png", diff_img);
+  #endif
 
   return sum /= 3 * img_og.cols * img_og.rows;
 }
@@ -34,18 +40,24 @@ float MeanAbsoluteError(cv::Mat img_og, cv::Mat img_constructed){
   CV_Assert(img_og.type() == img_constructed.type());
   float sum = 0;
   float diff = 0;
+  #ifdef MIMG
   cv::Mat diff_img(img_og.size(), img_og.type());
+  #endif
   for(int i = 0; i < img_og.cols; i++){
     for(int j = 0; j < img_og.rows; j++){
       for(int k = 0; k < 3; k++){
         diff = abs((img_constructed.at<cv::Vec3b>(i, j)[k] - img_og.at<cv::Vec3b>(i, j)[k]));
+        #ifdef MIMG
         diff_img.at<cv::Vec3b>(i, j)[k] = diff;
+        #endif
         sum += diff;
       }
     }
   }
 
+  #ifdef MIMG
   cv::imwrite("output_mae.png", diff_img);
+  #endif
 
   return sum /= 3 * img_og.cols * img_og.rows;
 }
@@ -100,8 +112,8 @@ double SSIM(const cv::Mat& img1, const cv::Mat& img2,
 
     double cov = covariance(img1, img2, mu1, mu2);
 
-    double luminance = (2 * mu1 * mu2 + C1) / (mu1 * mu1 + mu2 * mu2 + C1);
-    double contrast  = (2 * sigma1 * sigma2 + C2) / (sigma1 * sigma1 + sigma2 * sigma2 + C2);
+    double luminance = (2.0 * mu1 * mu2 + C1) / (std::pow(mu1, 2) + std::pow(mu2, 2) + C1);
+    double contrast = (2.0 * sigma1 * sigma2 + C2) / (std::pow(sigma1, 2) + std::pow(sigma2, 2) + C2);
     double structure = (cov + C3) / (sigma1 * sigma2 + C3);
 
     return std::pow(luminance, alpha) * std::pow(contrast, beta) * std::pow(structure, gamma);
@@ -110,8 +122,8 @@ double SSIM(const cv::Mat& img1, const cv::Mat& img2,
 int main() {
   std::srand(std::clock());
 
-  std::string image_path_1 = cv::samples::findFile("images/apple-og.jpg");
-  std::string image_path_2 = cv::samples::findFile("images/apple-og-upscaled.jpg");
+  std::string image_path_1 = cv::samples::findFile("images/tokyo-sniper.jpg");
+  std::string image_path_2 = cv::samples::findFile("images/tokyo-sniper-upscaled.jpg");
   cv::Mat img_og = cv::imread(image_path_1, cv::IMREAD_COLOR);
   cv::Mat img_noise = cv::imread(image_path_2, cv::IMREAD_COLOR);
 
