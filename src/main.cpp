@@ -1,7 +1,10 @@
 #include <cstdlib>
-#include <ctime>
 #include <cmath>
+
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+
 #include <opencv2/core.hpp>
 #include <opencv2/core/base.hpp>
 #include <opencv2/core/types.hpp>
@@ -62,20 +65,15 @@ float MeanAbsoluteError(cv::Mat img_og, cv::Mat img_constructed){
   return sum /= 3 * img_og.cols * img_og.rows;
 }
 
-float PSNR(cv::Mat img_og, cv::Mat img_constructed){
-  CV_Assert(img_og.size() == img_constructed.size());
-  CV_Assert(img_og.type() == img_constructed.type());
+float PSNR(cv::Mat img_og[], cv::Mat img_constructed[], int number_of_images){
   float sum = 0;
   float psnr = 0;
-  for(int i = 0; i < img_og.cols; i++){
-    for(int j = 0; j < img_og.rows; j++){
-      for(int k = 0; k < 3; k++){
-        sum += pow((img_constructed.at<cv::Vec3b>(i, j)[k] - img_og.at<cv::Vec3b>(i, j)[k]), 2);
-      }
-    }
+
+  for(int i = 0; i < number_of_images; i++){
+    sum += MeanSquaredError(img_og[i], img_constructed[i]);
   }
 
-  psnr = 10 * (log(pow(255, 2) / sum) / log(10));
+  psnr = 10 * (log(pow(255, 2) / (sum/number_of_images)) / log(10));
   return psnr;
 }
 
@@ -120,28 +118,30 @@ double SSIM(const cv::Mat& img1, const cv::Mat& img2,
 }
 
 int main() {
-  std::srand(std::clock());
 
-  std::string image_path_1 = cv::samples::findFile("images/tokyo-sniper.jpg");
-  std::string image_path_2 = cv::samples::findFile("images/tokyo-sniper-upscaled.jpg");
-  cv::Mat img_og = cv::imread(image_path_1, cv::IMREAD_COLOR);
-  cv::Mat img_noise = cv::imread(image_path_2, cv::IMREAD_COLOR);
+  int i = 0;
+  float psnr = 0;
+  float ssim = 0;
+  std::string file;
+  cv::Mat images_original[5];
+  cv::Mat images_upscaled[5];
+  std::filesystem::path directory_original = "./images/original";
+  std::filesystem::path directory_upscaled = "./images/upscaled";
 
-  float mean_squared_error, mean_absolute_error, psnr;
-
-  if(img_og.empty() || img_noise.empty()){
-      std::cout << "Could not read one of the images" << std::endl;
-      return 1;
+  for(const auto& entry : std::filesystem::directory_iterator(directory_original)){
+    images_original[i] = cv::imread(entry.path(), cv::IMREAD_COLOR);
+    i++;
+  }
+  i = 0;
+  for(const auto& entry : std::filesystem::directory_iterator(directory_upscaled)){
+    images_upscaled[i] = cv::imread(entry.path(), cv::IMREAD_COLOR);
+    i++;
   }
 
-  mean_squared_error = MeanSquaredError(img_og, img_noise);
-  std::cout << "Mean Squared Error: " << mean_squared_error << std::endl;
-  mean_absolute_error = MeanAbsoluteError(img_og, img_noise);
-  std::cout << "Mean Absolute Error: " << mean_absolute_error << std::endl;
-  psnr = PSNR(img_og, img_noise);
-  std::cout << "Peak Signal to Noise Ratio: " << psnr << std::endl;
-  double ssim_val = SSIM(img_og, img_noise, 1.0, 1.0, 1.0); // α, β, γ
-  std::cout << "SSIM: " << ssim_val << std::endl;
+  psnr = PSNR(images_original, images_upscaled, 5);
+  ssim = SSIM(images_original[0], images_upscaled[0]);
 
+  std::cout << "PSNR of Set5: " << psnr << std::endl;
+  std::cout << "SSIM of baby: " << ssim << std::endl;
   return 0;
 }
