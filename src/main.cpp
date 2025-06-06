@@ -67,33 +67,44 @@ float PSNR(cv::Mat img_og, cv::Mat img_constructed){
   return psnr;
 }
 
-double covariance(cv::Mat img_og, cv::Mat img_constructed, double M_OG_I, double M_RC_I) {
-  cv::Mat diff1 = img_og - M_OG_I;
-  cv::Mat diff2 = img_og - M_RC_I;
+double covariance(const cv::Mat& img1, const cv::Mat& img2, double mu1, double mu2) {
+    cv::Mat img1f, img2f;
+    img1.convertTo(img1f, CV_32F);
+    img2.convertTo(img2f, CV_32F);
 
-  cv::Mat prod = diff1.mul(diff2);
+    cv::Mat diff1 = img1f - mu1;
+    cv::Mat diff2 = img2f - mu2;
 
-  return (cv::sum(prod)[0]) / (img_og.total() - 1);
-  
+    cv::Mat prod = diff1.mul(diff2);
+    return static_cast<double>(cv::sum(prod)[0]) / (img1.total() - 1);
 }
 
-double SSIM(const cv::Mat img_og, const cv::Mat img_constructed) {
-  CV_Assert(img_og.size() == img_constructed.size());
-  CV_Assert(img_og.type() == img_constructed.type());
+double SSIM(const cv::Mat& img1, const cv::Mat& img2,
+            double alpha = 1.0, double beta = 1.0, double gamma = 1.0,
+            double k1 = 0.01, double k2 = 0.03, double L = 255.0) {
+    CV_Assert(img1.size() == img2.size());
+    CV_Assert(img1.type() == img2.type());
 
-  double k1 = 1.0f, k2 = 1.0f, L = 255.0f;
+    double C1 = std::pow(k1 * L, 2);
+    double C2 = std::pow(k2 * L, 2);
+    double C3 = C2 / 2.0;
 
-  double C1 = std::pow(k1 * L, 2), C2 = std::pow(k2 * L, 2);
+    cv::Scalar mu1_s, sigma1_s, mu2_s, sigma2_s;
+    cv::meanStdDev(img1, mu1_s, sigma1_s);
+    cv::meanStdDev(img2, mu2_s, sigma2_s);
 
-  cv::Scalar OG_I, RC_I, OG_D, RC_D;
-  cv::meanStdDev(img_og, OG_I, OG_D);
-  cv::meanStdDev(img_og, RC_I, RC_D);
+    double mu1 = mu1_s[0];
+    double mu2 = mu2_s[0];
+    double sigma1 = sigma1_s[0];
+    double sigma2 = sigma2_s[0];
 
-  double CL = 0.0f, CC = 0.0f;
+    double cov = covariance(img1, img2, mu1, mu2);
 
-  CL = (2*OG_I[0]*RC_I[0] + C1)/(OG_I[0] + RC_I[0] + C1);
-  CC = (2*OG_D[0]*RC_D[0] + C2)/(OG_D[0] + RC_D[0] + C2);
-  return 0.0f;
+    double luminance = (2 * mu1 * mu2 + C1) / (mu1 * mu1 + mu2 * mu2 + C1);
+    double contrast  = (2 * sigma1 * sigma2 + C2) / (sigma1 * sigma1 + sigma2 * sigma2 + C2);
+    double structure = (cov + C3) / (sigma1 * sigma2 + C3);
+
+    return std::pow(luminance, alpha) * std::pow(contrast, beta) * std::pow(structure, gamma);
 }
 
 int main() {
