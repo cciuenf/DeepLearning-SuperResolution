@@ -128,6 +128,8 @@ int main() {
   std::cout << "Mean Absolute Error: " << mean_absolute_error << std::endl;
   psnr = PSNR(img_og, img_noise);
   std::cout << "Peak Signal to Noise Ratio: " << psnr << std::endl;
+  double ssim_val = SSIM(img_og, img_noise, 1.0, 1.0, 1.0); // α, β, γ
+  std::cout << "SSIM: " << ssim_val << std::endl;
 
   return 0;
 }
