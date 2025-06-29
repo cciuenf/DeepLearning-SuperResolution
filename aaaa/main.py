@@ -2,7 +2,7 @@ import cv2 as cv
 import sys, os
 import math
 import numpy as np
-from sewar.full_ref import msssim, ssim, mse, vifp
+from sewar.full_ref import msssim, ssim, mse, vifp, psnr
  
 directories = {
     "original": "./images/original",
@@ -51,5 +51,5 @@ def GetLibImages(lib_name):
 downies = GetLibImages("original")
 uppies = GetLibImages("upscaled")
 for i in range(len(downies)):
-    res = ssim(downies[i]["cv_img"], uppies[i]["cv_img"])
+    res = psnr(downies[i]["cv_img"], uppies[i]["cv_img"])
     print(res)
