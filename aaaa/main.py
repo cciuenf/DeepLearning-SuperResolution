@@ -1,4 +1,4 @@
-
+import random
 import cv2 as cv
 import sys, os
 import math
@@ -139,8 +139,40 @@ class ImageViewer:
             self.index += 1
             self.show_images()
 
+def in_offset(y1, x1):
+    for elem in position_array:
+        if elem["x"] <= x1 or x1 <= elem["x"]+cut_size:
+            return True
+        if elem["y"] <= y1 or y1 <= elem["y"]+cut_size:
+            return True
+    return False
+
+cut_size = 49
+padding = int((cut_size-1)/2)
+image_count = 10
+position_array = []
+def cut(image, num_cuts, index):
+    x = random.randint(padding, (image["cv_img"].shape[0])-padding)
+    y = random.randint(padding, (image["cv_img"].shape[1])-padding)
+    x1 = x-padding
+    y1 = y-padding
+    print(x, y)   
+    print(x1, y1)
+    new_img = np.zeros((cut_size, cut_size, 3), dtype=np.uint8)
+    for i in range(0,cut_size):
+        for j in range(0,cut_size):
+            if in_offset(y1, x1):
+                cut(image, num_cuts, index)
+                return
+            new_img[i][j] = image["cv_img"][y1+i][x1+j]
+    position_array[index] = {"y": y1, "x": x1}
+    #cv.imwrite(f'output_{index}.jpg', new_img)
+
 # Run the GUI
 if __name__ == "__main__":
+    for i in range(0,image_count):
+        cut(downies[0], 1, i)
+    print(cut_container)
     root = Tk()
     viewer = ImageViewer(root, downies, uppies)
     root.mainloop()
