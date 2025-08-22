@@ -144,7 +144,6 @@ if __name__ == "__main__":
     root = Tk()
     viewer = ImageViewer(root, downies, uppies)
     root.mainloop()
-    print(res)
 
 
 
