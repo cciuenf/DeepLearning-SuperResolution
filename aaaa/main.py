@@ -139,84 +139,136 @@ class ImageViewer:
             self.index += 1
             self.show_images()
 
-def in_offset(y1, x1):
-    for elem in position_array:
-        if elem["x"] <= x1 or x1 <= elem["x"]+cut_size:
-            return True
-        if elem["y"] <= y1 or y1 <= elem["y"]+cut_size:
-            return True
-    return False
+def aabb_intersect(box1, box2):
+    return not (box1['x'] + box1['width'] <= box2['x'] or
+                box2['x'] + box2['width'] <= box1['x'] or
+                box1['y'] + box1['height'] <= box2['y'] or
+                box2['y'] + box2['height'] <= box1['y'])
 
-cut_size = 49
-padding = int((cut_size-1)/2)
+def find_valid_position(image_shape, cut_size, existing_boxes, max_attempts=1000):
+    height, width = image_shape[:2]
+    padding = int((cut_size - 1) / 2)
+    
+    for _ in range(max_attempts):
+        center_x = random.randint(padding, width - padding - 1)
+        center_y = random.randint(padding, height - padding - 1)
+        
+        x = center_x - padding
+        y = center_y - padding
+        
+        new_box = {
+            'x': x,
+            'y': y,
+            'width': cut_size,
+            'height': cut_size
+        }
+        
+        intersects = any(aabb_intersect(new_box, existing_box) for existing_box in existing_boxes)
+        
+        if not intersects:
+            return x, y, new_box
+    
+    return None, None, None
+
+cut_size = 50
 image_count = 10
 position_array = []
-def cut(image, num_cuts, index):
-    x = random.randint(padding, (image["cv_img"].shape[0])-padding)
-    y = random.randint(padding, (image["cv_img"].shape[1])-padding)
-    x1 = x-padding
-    y1 = y-padding
-    print(x, y)   
-    print(x1, y1)
-    new_img = np.zeros((cut_size, cut_size, 3), dtype=np.uint8)
-    for i in range(0,cut_size):
-        for j in range(0,cut_size):
-            if in_offset(y1, x1):
-                cut(image, num_cuts, index)
-                return
-            new_img[i][j] = image["cv_img"][y1+i][x1+j]
-    position_array[index] = {"y": y1, "x": x1}
-    #cv.imwrite(f'output_{index}.jpg', new_img)
+
+def cut_non_intersecting(image, num_cuts):
+    existing_boxes = []
+    successful_cuts = 0
+    
+    for i in range(num_cuts):
+        x, y, box = find_valid_position(image['cv_img'].shape, cut_size, existing_boxes)
+        
+        if x is None:
+            print(f"Could only place {successful_cuts} cuts out of {num_cuts}")
+            break
+        
+        new_img = image['cv_img'][y:y+cut_size, x:x+cut_size]
+        
+        output_filename = f'output_{i}.jpg'
+        cv.imwrite(output_filename, new_img)
+        
+        existing_boxes.append(box)
+        successful_cuts += 1
+        
+        print(f"Cut {i+1}: Position ({x}, {y}) - Size: {new_img.shape}")
+    
+    return successful_cuts
+
+def create_mutated_versions(original_cuts_count, output_folder="mutated"):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    total_mutations = 0
+    
+    for i in range(original_cuts_count):
+        original_filename = f'output_{i}.jpg'
+        
+        if not os.path.exists(original_filename):
+            print(f"Warning: {original_filename} not found, skipping mutations")
+            continue
+        
+        original_img = cv.imread(original_filename)
+        if original_img is None:
+            print(f"Warning: Could not load {original_filename}, skipping")
+            continue
+        
+        print(f"Creating mutations for {original_filename}...")
+        
+        rotations = {
+            90: cv.rotate(original_img, cv.ROTATE_90_CLOCKWISE),
+            180: cv.rotate(original_img, cv.ROTATE_180),
+            270: cv.rotate(original_img, cv.ROTATE_90_COUNTERCLOCKWISE)
+        }
+        
+        for angle, rotated_img in rotations.items():
+            rotated_filename = os.path.join(output_folder, f'output_{i}_rot_{angle}.jpg')
+            cv.imwrite(rotated_filename, rotated_img)
+            total_mutations += 1
+            print(f"  Saved: {rotated_filename}")
+        
+        h_flipped = cv.flip(original_img, 1)
+        h_flip_filename = os.path.join(output_folder, f'output_{i}_mirror_h.jpg')
+        cv.imwrite(h_flip_filename, h_flipped)
+        total_mutations += 1
+        print(f"  Saved: {h_flip_filename}")
+        
+        v_flipped = cv.flip(original_img, 0)
+        v_flip_filename = os.path.join(output_folder, f'output_{i}_mirror_v.jpg')
+        cv.imwrite(v_flip_filename, v_flipped)
+        total_mutations += 1
+        print(f"  Saved: {v_flip_filename}")
+        
+        original_copy_filename = os.path.join(output_folder, f'output_{i}_original.jpg')
+        cv.imwrite(original_copy_filename, original_img)
+        total_mutations += 1
+        print(f"  Saved: {original_copy_filename}")
+    
+    print(f"\nMutation complete! Created {total_mutations} total mutations")
+    return total_mutations
 
 # Run the GUI
 if __name__ == "__main__":
-    for i in range(0,image_count):
-        cut(downies[0], 1, i)
-    print(cut_container)
+    if len(downies) > 0:
+        successful_cuts = cut_non_intersecting(downies[0], image_count)
+        print(f"Successfully created {successful_cuts} non-intersecting cuts")
+        
+        if successful_cuts > 0:
+            print("\n" + "="*50)
+            print("Creating mutated versions...")
+            print("="*50)
+            
+            total_mutations = create_mutated_versions(successful_cuts)
+            
+            print(f"\nSummary:")
+            print(f"- Original cuts: {successful_cuts}")
+            print(f"- Total mutations: {total_mutations}")
+            print(f"- Mutations per original: {total_mutations // successful_cuts if successful_cuts > 0 else 0}")
+        
+    else:
+        print("No images found in the original directory")
     root = Tk()
     viewer = ImageViewer(root, downies, uppies)
     root.mainloop()
-
-
-
-"""
-double covariance(const cv::Mat& img1, const cv::Mat& img2, double mu1, double mu2) {
-    cv::Mat img1f, img2f;
-    img1.convertTo(img1f, CV_32F);
-    img2.convertTo(img2f, CV_32F);
-
-    cv::Mat diff1 = img1f - mu1;
-    cv::Mat diff2 = img2f - mu2;
-
-    cv::Mat prod = diff1.mul(diff2);
-    return static_cast<double>(cv::sum(prod)[0]) / (img1.total() - 1);
-}
-
-double SSIM(const cv::Mat& img1, const cv::Mat& img2,
-            double alpha = 1.0, double beta = 1.0, double gamma = 1.0,
-            double k1 = 0.01, double k2 = 0.03, double L = 255.0) {
-    CV_Assert(img1.size() == img2.size());
-    CV_Assert(img1.type() == img2.type());
-
-    double C1 = std::pow(k1 * L, 2);
-    double C2 = std::pow(k2 * L, 2);
-    double C3 = C2 / 2.0;
-
-    cv::Scalar mu1_s, sigma1_s, mu2_s, sigma2_s;
-    cv::meanStdDev(img1, mu1_s, sigma1_s);
-    cv::meanStdDev(img2, mu2_s, sigma2_s);
-
-    double mu1 = mu1_s[0];
-    double mu2 = mu2_s[0];
-    double sigma1 = sigma1_s[0];
-    double sigma2 = sigma2_s[0];
-
-    double cov = covariance(img1, img2, mu1, mu2);
-
-    double luminance = (2.0 * mu1 * mu2 + C1) / (std::pow(mu1, 2) + std::pow(mu2, 2) + C1);
-    double contrast = (2.0 * sigma1 * sigma2 + C2) / (std::pow(sigma1, 2) + std::pow(sigma2, 2) + C2);
-    double structure = (cov + C3) / (sigma1 * sigma2 + C3);
-
-    return std::pow(luminance, alpha) * std::pow(contrast, beta) * std::pow(structure, gamma);
-}
-"""
