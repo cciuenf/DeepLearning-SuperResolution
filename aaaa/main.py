@@ -27,7 +27,7 @@ Examples:
   %(prog)s --cut-images --count 10        # Cut 10 non-intersecting patches
   %(prog)s --create-mutations             # Create mutations from existing cuts
   %(prog)s --metrics                      # Calculate and display metrics
-  %(prog)s --cut-images --count 5 --rotation-angle 45 --verbose
+  %(prog)s --cut-images --count 5 --rotation-angle 45 --incremental --verbose
         """
     )
     
@@ -87,6 +87,18 @@ Examples:
         type=str,
         default='rotated_cuts',
         help='Output folder for custom rotations (default: rotated_cuts)'
+    )
+    
+    parser.add_argument(
+        '--incremental',
+        action='store_true',
+        help='Use incremental 1-degree rotations (each builds on previous)'
+    )
+    
+    parser.add_argument(
+        '--save-intermediates',
+        action='store_true',
+        help='Save each 1-degree step when using --incremental'
     )
     
     parser.add_argument(
@@ -156,12 +168,15 @@ def main():
             should_rotate = validate_rotation_args(args.rotation_angle, rotation_range_val)
             
             if should_rotate and successful_cuts > 0:
-                print(f"\nApplying custom rotation to {successful_cuts} cuts...")
+                mode = "incremental" if args.incremental else "direct"
+                print(f"\nApplying {mode} rotation to {successful_cuts} cuts...")
                 rotator.process_cuts_with_rotation(
                     cuts_count=successful_cuts,
                     output_folder=args.rotation_folder,
                     rotation_angle=args.rotation_angle,
-                    rotation_range=rotation_range_val
+                    rotation_range=rotation_range_val,
+                    incremental=args.incremental,
+                    save_intermediates=args.save_intermediates
                 )
         except ValueError as e:
             print(f"Error with rotation arguments: {e}")
