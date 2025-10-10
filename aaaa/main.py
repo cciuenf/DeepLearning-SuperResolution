@@ -23,11 +23,15 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --gui                          # Launch GUI for image comparison
+  %(prog)s --gui                          # Launch GUI for image comparison (original vs upscaled)
+  %(prog)s --gui --compare rotated_hybrid rotated_standard  # Compare two custom directories
   %(prog)s --cut-images --count 10        # Cut 10 non-intersecting patches
   %(prog)s --create-mutations             # Create mutations from existing cuts
   %(prog)s --metrics                      # Calculate and display metrics
-  %(prog)s --cut-images --count 5 --rotation-angle 45 --incremental --verbose
+  %(prog)s --cut-images --count 5 --rotation-angle 52 --verbose  # Hybrid: 45° + 7×1°
+  %(prog)s --cut-images --count 5 --rotation-angle 52 --rotation-mode standard  # Direct 52°
+  %(prog)s --cut-images --count 5 --rotation-angle 52 --rotation-mode incremental  # 52×1°
+  %(prog)s --cut-images --count 5 --rotation-angle 52 --rotation-mode all  # All three modes
         """
     )
     
@@ -35,6 +39,14 @@ Examples:
         '--gui', 
         action='store_true',
         help='Launch the GUI for image comparison'
+    )
+    
+    parser.add_argument(
+        '--compare',
+        type=str,
+        nargs=2,
+        metavar=('DIR1', 'DIR2'),
+        help='Compare two specific directories in GUI (e.g., --compare rotated_hybrid rotated_standard)'
     )
     
     parser.add_argument(
@@ -90,15 +102,17 @@ Examples:
     )
     
     parser.add_argument(
-        '--incremental',
-        action='store_true',
-        help='Use incremental 1-degree rotations (each builds on previous)'
+        '--rotation-mode',
+        type=str,
+        choices=['hybrid', 'standard', 'incremental', 'all'],
+        default='hybrid',
+        help='Rotation mode: hybrid (45° + incremental, default), standard (direct rotation), incremental (all 1° steps), all (generate all three modes)'
     )
     
     parser.add_argument(
         '--save-intermediates',
         action='store_true',
-        help='Save each 1-degree step when using --incremental'
+        help='Save each 1-degree step when using incremental or hybrid modes'
     )
     
     parser.add_argument(
@@ -127,9 +141,30 @@ Examples:
 def main():
     args = parse_arguments()
     
-    directories = {
-        name: f"./images/{name}" for name in args.directories
-    }
+    # Build directories dict - handle --compare specially
+    if args.compare:
+        # For --compare, check multiple locations for directories
+        dir1_name, dir2_name = args.compare
+        directories = {}
+        
+        for dir_name in [dir1_name, dir2_name]:
+            # Check if path exists as-is (current directory or absolute path)
+            if os.path.exists(dir_name):
+                directories[dir_name] = dir_name
+            # Check if it exists under ./images/
+            elif os.path.exists(f"./images/{dir_name}"):
+                directories[dir_name] = f"./images/{dir_name}"
+            # Check without leading ./
+            elif os.path.exists(f"./{dir_name}"):
+                directories[dir_name] = f"./{dir_name}"
+            else:
+                # Add it anyway, error will be caught later with helpful message
+                directories[dir_name] = dir_name
+    else:
+        # Default behavior: use ./images/ subdirectory
+        directories = {
+            name: f"./images/{name}" for name in args.directories
+        }
     
     image_lib = ImageLibrary(directories)
     
@@ -168,14 +203,13 @@ def main():
             should_rotate = validate_rotation_args(args.rotation_angle, rotation_range_val)
             
             if should_rotate and successful_cuts > 0:
-                mode = "incremental" if args.incremental else "direct"
-                print(f"\nApplying {mode} rotation to {successful_cuts} cuts...")
+                print(f"\nApplying {args.rotation_mode} rotation to {successful_cuts} cuts...")
                 rotator.process_cuts_with_rotation(
                     cuts_count=successful_cuts,
                     output_folder=args.rotation_folder,
                     rotation_angle=args.rotation_angle,
                     rotation_range=rotation_range_val,
-                    incremental=args.incremental,
+                    mode=args.rotation_mode,
                     save_intermediates=args.save_intermediates
                 )
         except ValueError as e:
@@ -214,17 +248,79 @@ def main():
     
     if args.gui:
         operations_performed = True
-        originals = image_lib.get_images('original')
-        upscaled = image_lib.get_images('upscaled')
         
-        if not originals or not upscaled:
-            print("Error: Need both 'original' and 'upscaled' images for GUI")
-            sys.exit(1)
-        
-        print("Launching GUI...")
-        root = Tk()
-        viewer = ImageViewer(root, originals, upscaled)
-        root.mainloop()
+        # Determine which directories to compare
+        if args.compare:
+            dir1_name, dir2_name = args.compare
+            
+            # Get images using the directory names as keys
+            dir1_images = image_lib.get_images(dir1_name)
+            dir2_images = image_lib.get_images(dir2_name)
+            
+            if not dir1_images or not dir2_images:
+                print(f"Error: Need images in both directories for comparison")
+                print(f"  '{dir1_name}': {len(dir1_images)} images found")
+                print(f"  '{dir2_name}': {len(dir2_images)} images found")
+                
+                # Show available directories
+                available = [name for name in image_lib.get_library_names() if image_lib.get_image_count(name) > 0]
+                if available:
+                    print(f"\nAvailable directories with images:")
+                    for avail_dir in available:
+                        print(f"  - {avail_dir}: {image_lib.get_image_count(avail_dir)} images")
+                sys.exit(1)
+            
+            # Check if images need resizing
+            import cv2 as cv
+            needs_resize = False
+            target_size = None
+            
+            if dir1_images and dir2_images:
+                img1_shape = dir1_images[0]["cv_img"].shape[:2]  # (H, W)
+                img2_shape = dir2_images[0]["cv_img"].shape[:2]
+                
+                if img1_shape != img2_shape:
+                    needs_resize = True
+                    target_size = img1_shape  # Use dir1 size as reference
+                    print(f"\nImage size mismatch detected:")
+                    print(f"  '{dir1_name}': {img1_shape[1]}x{img1_shape[0]}")
+                    print(f"  '{dir2_name}': {img2_shape[1]}x{img2_shape[0]}")
+                    print(f"  Resizing '{dir2_name}' images to {img1_shape[1]}x{img1_shape[0]}...")
+                    
+                    # Resize all dir2 images to match dir1
+                    resized_dir2_images = []
+                    for img_dict in dir2_images:
+                        img = img_dict["cv_img"]
+                        resized_img = cv.resize(img, (img1_shape[1], img1_shape[0]), interpolation=cv.INTER_AREA)
+                        resized_dir2_images.append({
+                            "path": img_dict["path"],
+                            "cv_img": resized_img
+                        })
+                    dir2_images = resized_dir2_images
+                    print(f"  ✓ Resized {len(dir2_images)} images")
+            
+            print(f"\nLaunching GUI to compare:")
+            print(f"  Left:  '{dir1_name}' ({len(dir1_images)} images)")
+            print(f"  Right: '{dir2_name}' ({len(dir2_images)} images)")
+            
+            root = Tk()
+            root.title(f"Image Comparison: {os.path.basename(dir1_name)} vs {os.path.basename(dir2_name)}")
+            viewer = ImageViewer(root, dir1_images, dir2_images, label_left=dir1_name, label_right=dir2_name)
+            root.mainloop()
+        else:
+            # Default behavior: compare 'original' and 'upscaled'
+            originals = image_lib.get_images('original')
+            upscaled = image_lib.get_images('upscaled')
+            
+            if not originals or not upscaled:
+                print("Error: Need both 'original' and 'upscaled' images for GUI")
+                print("Tip: Use --compare DIR1 DIR2 to compare custom directories")
+                sys.exit(1)
+            
+            print("Launching GUI...")
+            root = Tk()
+            viewer = ImageViewer(root, originals, upscaled)
+            root.mainloop()
     
     if not operations_performed:
         print("No operations specified. Use --help for available options.")

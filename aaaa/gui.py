@@ -7,13 +7,14 @@ import tkinter as tk
 from tkinter import Label, Canvas, Button, Frame
 from PIL import Image, ImageTk
 import cv2 as cv
+import numpy as np
 from metrics import calculate_psnr, calculate_ssim, calculate_all_psnr
 
 
 class ImageViewer:
     """GUI class for comparing original and upscaled images"""
     
-    def __init__(self, root, originals, upscaled):
+    def __init__(self, root, originals, upscaled, label_left="Original", label_right="Upscaled"):
         """
         Initialize the image viewer
         
@@ -21,10 +22,14 @@ class ImageViewer:
             root: Tkinter root window
             originals: List of original image dictionaries
             upscaled: List of upscaled image dictionaries
+            label_left: Label for left images (default: "Original")
+            label_right: Label for right images (default: "Upscaled")
         """
         self.root = root
         self.originals = originals
         self.upscaled = upscaled
+        self.label_left = label_left
+        self.label_right = label_right
         self.index = 0
         
         if len(self.originals) != len(self.upscaled):
@@ -42,9 +47,11 @@ class ImageViewer:
         self.label_image = Label(self.root, text="", font=("Arial", 14))
         self.label_psnr = Label(self.root, text="", font=("Arial", 14))
         self.label_ssim = Label(self.root, text="", font=("Arial", 14))
+        self.label_size_info = Label(self.root, text="", font=("Arial", 10), fg="blue")
         self.label_image.pack(pady=5)
         self.label_psnr.pack()
         self.label_ssim.pack()
+        self.label_size_info.pack()
         
         self.canvas = Canvas(self.root, width=1000, height=500, bg='lightgray')
         self.canvas.pack(pady=10)
@@ -73,7 +80,7 @@ class ImageViewer:
         self.root.bind('<Left>', lambda e: self._show_prev())
         self.root.bind('<Right>', lambda e: self._show_next())
         self.root.bind('<Escape>', lambda e: self.root.quit())
-        self.root.focus_set()  # Allow keyboard events
+        self.root.focus_set()
         
         self.label_all_psnr = Label(self.root, text="", font=("Arial", 12, "italic"))
         self.label_all_psnr.pack(pady=5)
@@ -94,6 +101,35 @@ class ImageViewer:
         except Exception as e:
             self.label_all_psnr.config(text=f"Error calculating average PSNR: {str(e)}")
     
+    def _resize_to_match(self, img1, img2):
+        """
+        Resize images to match dimensions if they differ
+        
+        Args:
+            img1: First image (numpy array)
+            img2: Second image (numpy array)
+            
+        Returns:
+            tuple: (img1_resized, img2_resized) both with same dimensions
+        """
+        h1, w1 = img1.shape[:2]
+        h2, w2 = img2.shape[:2]
+        
+        if (h1, w1) == (h2, w2):
+            return img1, img2
+        
+        # This should rarely happen since we pre-resize in main.py
+        # But keep it as a safety fallback
+        target_h = min(h1, h2)
+        target_w = min(w1, w2)
+        
+        img1_resized = img1 if (h1, w1) == (target_h, target_w) else cv.resize(img1, (target_w, target_h), interpolation=cv.INTER_AREA)
+        img2_resized = img2 if (h2, w2) == (target_h, target_w) else cv.resize(img2, (target_w, target_h), interpolation=cv.INTER_AREA)
+        
+        print(f"Warning: Had to resize images in GUI (should have been done in main.py)")
+        
+        return img1_resized, img2_resized
+    
     def _show_images(self):
         """Display the current pair of images with their metrics"""
         if not self.originals or not self.upscaled:
@@ -107,6 +143,14 @@ class ImageViewer:
             orig = self.originals[self.index]["cv_img"]
             upsc = self.upscaled[self.index]["cv_img"]
             
+            # Images should already be resized in main.py, but double-check
+            if orig.shape[:2] != upsc.shape[:2]:
+                orig, upsc = self._resize_to_match(orig, upsc)
+                self.label_size_info.config(text=f"⚠ Size mismatch! Resized to {upsc.shape[1]}×{upsc.shape[0]}")
+            else:
+                self.label_size_info.config(text="")
+            
+            # Calculate metrics (images are now guaranteed same size)
             psnr_val = calculate_psnr(orig, upsc)
             ssim_val = calculate_ssim(orig, upsc)
             
@@ -120,6 +164,7 @@ class ImageViewer:
                 ssim_display = ssim_val
             self.label_ssim.config(text=f"SSIM: {ssim_display:.4f}")
             
+            # Display images
             orig_rgb = cv.cvtColor(orig, cv.COLOR_BGR2RGB)
             upsc_rgb = cv.cvtColor(upsc, cv.COLOR_BGR2RGB)
             
@@ -143,8 +188,9 @@ class ImageViewer:
             self.canvas.create_image(orig_x, orig_y, anchor=tk.NW, image=self.tk_orig)
             self.canvas.create_image(upsc_x, upsc_y, anchor=tk.NW, image=self.tk_upsc)
             
-            self.canvas.create_text(250, 20, text="Original", font=("Arial", 14, "bold"), fill="black")
-            self.canvas.create_text(750, 20, text="Upscaled", font=("Arial", 14, "bold"), fill="black")
+            # Use custom labels
+            self.canvas.create_text(250, 20, text=self.label_left, font=("Arial", 14, "bold"), fill="black")
+            self.canvas.create_text(750, 20, text=self.label_right, font=("Arial", 14, "bold"), fill="black")
             
             orig_info = f"{orig.shape[1]}×{orig.shape[0]}"
             upsc_info = f"{upsc.shape[1]}×{upsc.shape[0]}"
@@ -153,6 +199,8 @@ class ImageViewer:
             
         except Exception as e:
             print(f"Error displaying images: {e}")
+            import traceback
+            traceback.print_exc()
             self.label_image.config(text=f"Error loading image {self.index+1}")
             self.label_psnr.config(text="PSNR: N/A")
             self.label_ssim.config(text="SSIM: N/A")

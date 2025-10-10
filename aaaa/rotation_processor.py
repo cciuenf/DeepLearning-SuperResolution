@@ -1,6 +1,6 @@
 """
 Custom Rotation Processing Module
-Handles arbitrary rotation angles with intelligent cropping and custom incremental rotation
+Handles arbitrary rotation angles with intelligent cropping and hybrid rotation
 """
 
 import cv2 as cv
@@ -169,7 +169,7 @@ class RotationProcessor:
 
         return cropped
 
-    # ===== CUSTOM INCREMENTAL ROTATION METHODS =====
+    # ===== INCREMENTAL ROTATION METHODS =====
 
     def _rotate_single_degree_custom(self, img, clockwise=True):
         """
@@ -198,19 +198,20 @@ class RotationProcessor:
         y_centered = y_grid - center_y
 
         # Apply inverse rotation matrix to find source coordinates
-        src_x = x_centered * cos_a + y_centered * sin_a + center_x
-        src_y = -x_centered * sin_a + y_centered * cos_a + center_y
+        # For forward rotation by angle θ, we need inverse rotation by -θ
+        src_x = x_centered * cos_a - y_centered * sin_a + center_x
+        src_y = x_centered * sin_a + y_centered * cos_a + center_y
 
         # Convert to float32 for cv.remap
         src_x = src_x.astype(np.float32)
         src_y = src_y.astype(np.float32)
 
-        # Use remap for interpolation (we computed rotation ourselves)
-        output = cv.remap(img, src_x, src_y, cv.INTER_LINEAR, borderMode=cv.BORDER_CONSTANT)
+        # Use remap for interpolation
+        output = cv.remap(img, src_x, src_y, cv.INTER_LINEAR, borderMode=cv.BORDER_CONSTANT, borderValue=(0, 0, 0))
 
         return output
 
-    def rotate_incrementally(self, img, target_angle, save_each=True, output_prefix="incremental", output_folder=None):
+    def rotate_incrementally(self, img, target_angle, save_each=False, output_prefix="incremental", output_folder=None):
         """
         Rotate image incrementally by 1 degree steps, each building on the previous
 
@@ -250,16 +251,82 @@ class RotationProcessor:
             if save_each and output_folder:
                 filename = os.path.join(output_folder, f"{output_prefix}_step_{current_angle:+04d}.jpg")
                 cv.imwrite(filename, current_img)
-                if self.verbose and (step + 1) % 5 == 0:  # Report every 5 steps
+                if self.verbose and (step + 1) % 5 == 0:
                     print(f"    Progress: {step + 1}/{steps} degrees")
+
+        return current_img
+
+    def rotate_hybrid(self, img, target_angle, save_intermediates=False, output_prefix="hybrid", output_folder=None):
+        """
+        Hybrid rotation: use standard rotation for 45° multiples, then incremental for remainder
+        
+        For example:
+        - 13° → 13 incremental 1° rotations
+        - 45° → 1 standard 45° rotation
+        - 52° → 1 standard 45° rotation + 7 incremental 1° rotations
+        - -52° → 1 standard -45° rotation + 7 incremental -1° rotations
+
+        Args:
+            img: Input image
+            target_angle: Target rotation angle in degrees
+            save_intermediates: Save intermediate steps (only for incremental portion)
+            output_prefix: Prefix for saved files
+            output_folder: Folder for intermediate steps
+
+        Returns:
+            Final rotated image
+        """
+        if target_angle == 0:
+            return img
+
+        # Decompose angle into 45° chunks and remainder
+        sign = 1 if target_angle > 0 else -1
+        abs_angle = abs(target_angle)
+        
+        num_45s = int(abs_angle // 45)
+        remainder = abs_angle - (num_45s * 45)  # Calculate exact remainder
+
+        if self.verbose:
+            print(f"    Hybrid decomposition: {abs_angle}° = {num_45s}×45° + {remainder}°")
+
+        current_img = img.copy()
+
+        # Apply 45° rotations using standard method
+        if num_45s > 0:
+            standard_angle = sign * num_45s * 45
+            if self.verbose:
+                print(f"    Applying standard rotation: {standard_angle}°")
+            current_img = self.rotate_with_crop(current_img, standard_angle)
+
+        # Apply remainder using incremental rotation
+        if remainder > 0:
+            incremental_angle = sign * remainder
+            if self.verbose:
+                print(f"    Applying incremental rotation: {incremental_angle}°")
+            
+            intermediate_folder = None
+            if save_intermediates and output_folder:
+                intermediate_folder = output_folder
+            
+            current_img = self.rotate_incrementally(
+                current_img,
+                incremental_angle,
+                save_each=save_intermediates,
+                output_prefix=output_prefix,
+                output_folder=intermediate_folder
+            )
+        
+        if self.verbose:
+            expected_total = sign * (num_45s * 45 + int(round(remainder)))
+            print(f"    Hybrid complete: expected total rotation = {expected_total}°")
 
         return current_img
 
     def process_cuts_with_rotation(self, input_prefix='output', output_folder='rotated_cuts', 
                                    rotation_angle=None, rotation_range=None, cuts_count=None,
-                                   incremental=False, save_intermediates=False):
+                                   mode='hybrid', save_intermediates=False):
         """
-        Process existing cuts with custom rotation
+        Process existing cuts with rotation
 
         Args:
             input_prefix: Prefix of input cut files
@@ -267,8 +334,8 @@ class RotationProcessor:
             rotation_angle: Fixed rotation angle in degrees (XOR with rotation_range)
             rotation_range: Tuple of (min_angle, max_angle) for random rotation
             cuts_count: Number of cuts to process (auto-detect if None)
-            incremental: Use incremental 1-degree rotations
-            save_intermediates: Save each 1-degree step (only if incremental=True)
+            mode: 'hybrid' (default), 'standard', 'incremental', or 'all'
+            save_intermediates: Save each 1-degree step (only relevant for incremental/hybrid)
 
         Returns:
             int: Number of successfully processed cuts
@@ -278,6 +345,9 @@ class RotationProcessor:
 
         if rotation_angle is None and rotation_range is None:
             raise ValueError("Must specify either rotation_angle or rotation_range")
+
+        if mode not in ['hybrid', 'standard', 'incremental', 'all']:
+            raise ValueError("mode must be 'hybrid', 'standard', 'incremental', or 'all'")
 
         if cuts_count is None:
             cuts_count = 0
@@ -295,6 +365,13 @@ class RotationProcessor:
                 print(f"Created output folder: {output_folder}")
 
         processed_count = 0
+
+        # Determine which modes to run
+        modes_to_run = []
+        if mode == 'all':
+            modes_to_run = ['hybrid', 'standard', 'incremental']
+        else:
+            modes_to_run = [mode]
 
         for i in range(cuts_count):
             input_filename = f'{input_prefix}_{i}.jpg'
@@ -318,88 +395,142 @@ class RotationProcessor:
                 angle = random.uniform(min_angle, max_angle)
                 angle_suffix = f"rot_{angle:.1f}"
 
-            if self.verbose:
-                mode = "incremental" if incremental else "direct"
-                print(f"Processing {input_filename} with {mode} rotation: {angle:.1f}°")
+            # Process with each mode
+            for current_mode in modes_to_run:
+                if self.verbose:
+                    mode_desc = f"{current_mode} rotation"
+                    if mode == 'all':
+                        print(f"Processing {input_filename} with {mode_desc}: {angle:.1f}°")
+                    else:
+                        print(f"Processing {input_filename} with {mode_desc}: {angle:.1f}°")
 
-            try:
-                if incremental:
+                try:
                     # Create subfolder for intermediates if requested
                     intermediate_folder = None
-                    if save_intermediates:
-                        intermediate_folder = os.path.join(output_folder, f"steps_{i}")
+                    if save_intermediates and current_mode in ['incremental', 'hybrid']:
+                        intermediate_folder = os.path.join(output_folder, f"steps_{i}_{current_mode}")
 
-                    rotated = self.rotate_incrementally(
-                        image, 
-                        angle, 
-                        save_each=save_intermediates,
-                        output_prefix=f"cut_{i}",
-                        output_folder=intermediate_folder
-                    )
-                else:
-                    # Use standard rotation with crop
-                    rotated = self.rotate_with_crop(image, angle)
+                    # Apply rotation based on current mode
+                    if current_mode == 'hybrid':
+                        if self.verbose:
+                            print(f"  [HYBRID] Target angle: {angle:.1f}°")
+                        rotated = self.rotate_hybrid(
+                            image,
+                            angle,
+                            save_intermediates=save_intermediates,
+                            output_prefix=f"cut_{i}",
+                            output_folder=intermediate_folder
+                        )
+                    elif current_mode == 'incremental':
+                        if self.verbose:
+                            print(f"  [INCREMENTAL] Target angle: {angle:.1f}°")
+                        rotated = self.rotate_incrementally(
+                            image,
+                            angle,
+                            save_each=save_intermediates,
+                            output_prefix=f"cut_{i}",
+                            output_folder=intermediate_folder
+                        )
+                    else:  # standard
+                        if self.verbose:
+                            print(f"  [STANDARD] Target angle: {angle:.1f}°")
+                        rotated = self.rotate_with_crop(image, angle)
 
-                output_filename = os.path.join(
-                    output_folder, 
-                    f'{input_prefix}_{i}_{angle_suffix}.jpg'
-                )
+                    # Create output filename with mode suffix for 'all' mode
+                    if mode == 'all':
+                        output_filename = os.path.join(
+                            output_folder,
+                            f'{input_prefix}_{i}_{angle_suffix}_{current_mode}.jpg'
+                        )
+                    else:
+                        output_filename = os.path.join(
+                            output_folder,
+                            f'{input_prefix}_{i}_{angle_suffix}.jpg'
+                        )
 
-                cv.imwrite(output_filename, rotated)
-                processed_count += 1
+                    cv.imwrite(output_filename, rotated)
+                    processed_count += 1
 
-                if self.verbose:
-                    original_size = f"{image.shape[1]}x{image.shape[0]}"
-                    final_size = f"{rotated.shape[1]}x{rotated.shape[0]}"
-                    print(f"  Saved: {output_filename} ({original_size} -> {final_size})")
+                    if self.verbose:
+                        original_size = f"{image.shape[1]}x{image.shape[0]}"
+                        final_size = f"{rotated.shape[1]}x{rotated.shape[0]}"
+                        print(f"  Saved: {output_filename} ({original_size} -> {final_size})")
 
-            except Exception as e:
-                if self.verbose:
-                    print(f"  Error processing {input_filename}: {str(e)}")
-                continue
+                except Exception as e:
+                    if self.verbose:
+                        print(f"  Error processing {input_filename} with {current_mode}: {str(e)}")
+                    continue
 
         if self.verbose:
             print(f"\nRotation processing complete! Processed {processed_count} out of {cuts_count} cuts")
 
         return processed_count
 
-    def process_single_image(self, image_path, angle, output_path, incremental=False):
+    def process_single_image(self, image_path, angle, output_path, mode='hybrid'):
         """
         Process a single image with rotation
 
         Args:
             image_path: Path to input image
             angle: Rotation angle in degrees
-            output_path: Path for output image
-            incremental: Use incremental rotation
+            output_path: Path for output image (or folder if mode='all')
+            mode: 'hybrid' (default), 'standard', 'incremental', or 'all'
 
         Returns:
-            bool: Success status
+            bool or dict: Success status (bool) or dict of results if mode='all'
         """
         try:
             image = cv.imread(image_path)
             if image is None:
-                return False
+                return False if mode != 'all' else {}
 
-            if incremental:
-                rotated = self.rotate_incrementally(image, angle)
+            if mode == 'all':
+                # output_path should be a folder for 'all' mode
+                if not os.path.exists(output_path):
+                    os.makedirs(output_path)
+                
+                results = {}
+                base_name = os.path.splitext(os.path.basename(image_path))[0]
+                
+                for current_mode in ['hybrid', 'standard', 'incremental']:
+                    if current_mode == 'hybrid':
+                        rotated = self.rotate_hybrid(image, angle)
+                    elif current_mode == 'incremental':
+                        rotated = self.rotate_incrementally(image, angle)
+                    else:  # standard
+                        rotated = self.rotate_with_crop(image, angle)
+                    
+                    mode_output_path = os.path.join(output_path, f"{base_name}_{current_mode}.jpg")
+                    cv.imwrite(mode_output_path, rotated)
+                    results[current_mode] = mode_output_path
+                    
+                    if self.verbose:
+                        print(f"Processed {image_path} -> {mode_output_path} (angle: {angle}°, mode: {current_mode})")
+                
+                return results
             else:
-                rotated = self.rotate_with_crop(image, angle)
+                # Single mode processing
+                if mode == 'hybrid':
+                    rotated = self.rotate_hybrid(image, angle)
+                elif mode == 'incremental':
+                    rotated = self.rotate_incrementally(image, angle)
+                else:  # standard
+                    rotated = self.rotate_with_crop(image, angle)
 
-            cv.imwrite(output_path, rotated)
+                cv.imwrite(output_path, rotated)
 
-            if self.verbose:
-                print(f"Processed {image_path} -> {output_path} (angle: {angle}°)")
+                if self.verbose:
+                    print(f"Processed {image_path} -> {output_path} (angle: {angle}°, mode: {mode})")
 
-            return True
+                return True
 
         except Exception as e:
             if self.verbose:
                 print(f"Error processing {image_path}: {str(e)}")
-            return False
+            return False if mode != 'all' else {}
 
-    def batch_process_with_angle_range(self, input_files, output_folder, min_angle, max_angle, 
-                                       samples_per_image=5, incremental=False):
+    def batch_process_with_angle_range(self, input_files, output_folder, min_angle, max_angle,
+                                       samples_per_image=5, mode='hybrid'):
         """
         Process multiple images with random rotations within a range
 
@@ -409,7 +540,7 @@ class RotationProcessor:
             min_angle: Minimum rotation angle
             max_angle: Maximum rotation angle
             samples_per_image: Number of rotated versions per input image
-            incremental: Use incremental rotation
+            mode: 'hybrid' (default), 'standard', 'incremental', or 'all'
 
         Returns:
             int: Total number of processed images
@@ -428,11 +559,18 @@ class RotationProcessor:
 
             for sample in range(samples_per_image):
                 angle = random.uniform(min_angle, max_angle)
-                output_filename = f"{name_without_ext}_rot_{angle:.1f}_sample_{sample}.jpg"
-                output_path = os.path.join(output_folder, output_filename)
-
-                if self.process_single_image(file_path, angle, output_path, incremental):
-                    total_processed += 1
+                
+                if mode == 'all':
+                    # Create subfolder for this sample
+                    sample_folder = os.path.join(output_folder, f"{name_without_ext}_sample_{sample}")
+                    result = self.process_single_image(file_path, angle, sample_folder, mode)
+                    if result:  # result is a dict with mode keys
+                        total_processed += len(result)
+                else:
+                    output_filename = f"{name_without_ext}_rot_{angle:.1f}_sample_{sample}.jpg"
+                    output_path = os.path.join(output_folder, output_filename)
+                    if self.process_single_image(file_path, angle, output_path, mode):
+                        total_processed += 1
 
         return total_processed
 
